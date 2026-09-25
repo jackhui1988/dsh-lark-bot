@@ -37,6 +37,22 @@ function textOfBlocks(blocks: unknown): string {
 
 interface ToolDeltaTracker {
   emitted: Set<string>;
+  /**
+   * `${turn}:${step}` pairs that already streamed live chunk deltas. Newer dsh
+   * runtimes stop emitting `assistant/chunk` and deliver the whole step in
+   * `assistant/message`; the assistant-message translation then supplies the
+   * text so those steps are not empty, while chunked steps keep the exact
+   * streaming card and skip the duplicate content.
+   */
+  chunkedSteps?: Set<string>;
+}
+
+/** Identity of the step an assistant event belongs to, when the runtime labels it. */
+function stepKey(data: unknown): string | undefined {
+  if (!isRecord(data)) return undefined;
+  const { turn, step } = data;
+  if (typeof turn !== 'number' || typeof step !== 'number') return undefined;
+  return `${String(turn)}:${String(step)}`;
 }
 
 function translateChunk(chunk: unknown, tracker: ToolDeltaTracker): AgentEvent[] {
@@ -89,9 +105,8 @@ function translateToolResult(data: unknown): AgentEvent[] {
   ];
 }
 
-function translateAssistantMessage(data: unknown): AgentEvent[] {
-  if (!isRecord(data) || !isRecord(data.usage)) return [];
-  const usage = data.usage;
+function translateUsage(usage: unknown): AgentEvent[] {
+  if (!isRecord(usage)) return [];
   const inputTokens =
     typeof usage.inputTokens === 'number' ? usage.inputTokens : undefined;
   const outputTokens =
@@ -117,6 +132,43 @@ function translateAssistantMessage(data: unknown): AgentEvent[] {
   ];
 }
 
+/**
+ * Content of one complete assistant message: reasoning blocks feed the
+ * thinking section and the text blocks become the step's answer. Tool blocks
+ * are skipped because `tool/call` / `tool/result` events already surface them,
+ * which keeps the tool panel free of duplicates.
+ */
+function translateAssistantContent(message: unknown): AgentEvent[] {
+  if (!isRecord(message) || !Array.isArray(message.content)) return [];
+  const events: AgentEvent[] = [];
+  let text = '';
+  for (const block of message.content) {
+    if (!isRecord(block)) continue;
+    if (block.type === 'reasoning' && typeof block.text === 'string' && block.text !== '') {
+      events.push({ type: 'thinking', delta: block.text });
+    } else if (block.type === 'text' && typeof block.text === 'string') {
+      text += block.text;
+    }
+  }
+  if (text.trim() !== '') events.push({ type: 'final_text', content: text });
+  return events;
+}
+
+/**
+ * Translate `assistant/message`. Steps that streamed live chunks keep their
+ * streamed card (content is skipped, only usage is reported); steps without
+ * chunks — the shape newer dsh runtimes emit — contribute their reasoning and
+ * final text so the card is never empty.
+ */
+function translateAssistantMessage(data: unknown, tracker?: ToolDeltaTracker): AgentEvent[] {
+  if (!isRecord(data)) return [];
+  const key = stepKey(data);
+  const chunked = key !== undefined && tracker?.chunkedSteps?.has(key) === true;
+  const events: AgentEvent[] = chunked ? [] : translateAssistantContent(data.message);
+  events.push(...translateUsage(data.usage));
+  return events;
+}
+
 function translateTurnEnd(data: unknown): AgentEvent[] {
   if (!isRecord(data) || !isRecord(data.reason) || data.reason.kind !== 'error') return [];
   const failure = isRecord(data.reason.error) ? data.reason.error : undefined;
@@ -126,9 +178,14 @@ function translateTurnEnd(data: unknown): AgentEvent[] {
 
 /**
  * Translate one SDK session event into bridge `AgentEvent`s.
- * Token-level `assistant/chunk` deltas give the streaming (typewriter) card
- * experience: reasoning deltas feed the thinking section, text deltas feed
- * the output block, tool deltas surface live tool activity.
+ *
+ * Two runtime shapes are supported. Runtimes that stream `assistant/chunk`
+ * deltas keep the typewriter card: reasoning deltas feed the thinking section,
+ * text deltas feed the output block, tool deltas surface live tool activity.
+ * Runtimes that only append complete `assistant/message` events (dsh >= 0.1.5
+ * stopped emitting chunk events on the session bus) instead contribute that
+ * step's reasoning and final text, so the card still carries the answer; the
+ * `chunkedSteps` tracker decides per step which of the two applies.
  */
 export function translateSessionEvent(
   event: unknown,
@@ -136,8 +193,15 @@ export function translateSessionEvent(
 ): AgentEvent[] {
   if (!isRecord(event) || typeof event.type !== 'string') return [];
   switch (event.type) {
-    case 'assistant/chunk':
-      return translateChunk(isRecord(event.data) ? event.data.chunk : undefined, tracker);
+    case 'assistant/chunk': {
+      const data = isRecord(event.data) ? event.data : undefined;
+      const events = translateChunk(data?.chunk, tracker);
+      const key = stepKey(data);
+      if (events.length > 0 && key !== undefined) {
+        (tracker.chunkedSteps ??= new Set<string>()).add(key);
+      }
+      return events;
+    }
     case 'tool/call': {
       const data = isRecord(event.data) ? event.data : undefined;
       const id = stringValue(data?.callId);
@@ -154,7 +218,7 @@ export function translateSessionEvent(
     case 'tool/result':
       return translateToolResult(event.data);
     case 'assistant/message':
-      return translateAssistantMessage(event.data);
+      return translateAssistantMessage(event.data, tracker);
     case 'turn/end':
       return translateTurnEnd(event.data);
     default:

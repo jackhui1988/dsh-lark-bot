@@ -231,3 +231,94 @@ describe('createSdkRun', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done', terminationReason: 'interrupted' });
   });
 });
+
+describe('translateSessionEvent without chunk events (dsh >= 0.1.5)', () => {
+  it('renders a completed assistant message as thinking plus final text', () => {
+    const tracker = { emitted: new Set<string>() };
+    const events = translateSessionEvent(
+      {
+        type: 'assistant/message',
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'reasoning', text: 'weighing options' },
+              { type: 'text', text: 'the answer' },
+            ],
+          },
+          usage: { inputTokens: 5, outputTokens: 7 },
+        },
+      },
+      tracker,
+    );
+    expect(events).toContainEqual({ type: 'thinking', delta: 'weighing options' });
+    expect(events).toContainEqual({ type: 'final_text', content: 'the answer' });
+    expect(events).toContainEqual({ type: 'usage', inputTokens: 5, outputTokens: 7 });
+  });
+
+  it('joins multiple text blocks and drops empty answers', () => {
+    const tracker = { emitted: new Set<string>() };
+    const joined = translateSessionEvent(
+      {
+        type: 'assistant/message',
+        data: { turn: 2, step: 1, message: { content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] } },
+      },
+      tracker,
+    );
+    expect(joined).toEqual([{ type: 'final_text', content: 'ab' }]);
+    const reasoningOnly = translateSessionEvent(
+      {
+        type: 'assistant/message',
+        data: { turn: 2, step: 2, message: { content: [{ type: 'reasoning', text: 'hmm' }] } },
+      },
+      tracker,
+    );
+    expect(reasoningOnly).toEqual([{ type: 'thinking', delta: 'hmm' }]);
+  });
+
+  it('skips message content for steps that already streamed chunks', () => {
+    const tracker = { emitted: new Set<string>() };
+    const streamed = translateSessionEvent(
+      {
+        type: 'assistant/chunk',
+        data: { turn: 3, step: 1, chunk: { type: 'text-delta', text: 'the answer' } },
+      },
+      tracker,
+    );
+    expect(streamed).toEqual([{ type: 'text', delta: 'the answer' }]);
+    const completed = translateSessionEvent(
+      {
+        type: 'assistant/message',
+        data: {
+          turn: 3,
+          step: 1,
+          message: { content: [{ type: 'text', text: 'the answer' }] },
+          usage: { inputTokens: 1 },
+        },
+      },
+      tracker,
+    );
+    expect(completed).toEqual([{ type: 'usage', inputTokens: 1 }]);
+  });
+
+  it('still renders a later step that emitted no chunks', () => {
+    const tracker = { emitted: new Set<string>() };
+    translateSessionEvent(
+      {
+        type: 'assistant/chunk',
+        data: { turn: 4, step: 1, chunk: { type: 'text-delta', text: 'first' } },
+      },
+      tracker,
+    );
+    const second = translateSessionEvent(
+      {
+        type: 'assistant/message',
+        data: { turn: 4, step: 2, message: { content: [{ type: 'text', text: 'second' }] } },
+      },
+      tracker,
+    );
+    expect(second).toEqual([{ type: 'final_text', content: 'second' }]);
+  });
+});
