@@ -24,6 +24,8 @@ import type { ScopeDirectory } from '../bridge/scope-directory.js';
 import type { SendOptions } from '../bridge/send-options.js';
 import type { WorkspaceStore } from '../workspace/store.js';
 import { renderWorkspaceCard } from '../card/workspace-card.js';
+import { resolveGuiWorkspace, type GuiWorkspace, type GuiWorkspaceRegistry } from '../workspace/gui-registry.js';
+import type { GuiWorkspaceAdopter } from '../workspace/adopt.js';
 import {
   renderStatusCard,
   statusCardMarkdown,
@@ -160,6 +162,10 @@ export interface CommandContext {
     remove(target: SecretTargetType, reference: string): Promise<boolean>;
   };
   channelUpdates?: Pick<ChannelUpdateController, 'check'>;
+  /** Host GUI workspace registry (`$DSH_HOME/storages/workspace.json`). */
+  guiWorkspaces?: GuiWorkspaceRegistry;
+  /** Adopts bridge sessions into GUI workspace rosters through the local gateway. */
+  guiAdopter?: GuiWorkspaceAdopter;
 }
 
 type Handler = (args: string, ctx: CommandContext) => Promise<void>;
@@ -190,7 +196,7 @@ const HELP = [
   '- `/new` `/reset` — 开始新会话',
   '- `/newg <群名>` — 自动新建群聊（拉你入群）并开新会话，当前会话保留',
   '- `/cd <path>` — 切换到该目录的独立会话（切回可继续）',
-  '- `/ws list|save <name>|use <name>|remove <name>` — 管理工作空间',
+  '- `/ws list|save <name>|use <name|GUI 工作区名>|remove <name>` — 管理工作空间；`/ws <序号>` 打开宿主 GUI 工作区并自动挂组',
   '- `/status` — 查看可刷新状态卡、上下文/token 用量与待处理卡',
   '- `/jobs [show <消息ID>|retry <消息ID>]` — 对账排队/运行/失败任务并显式重试',
   '- `/version` — 查看当前版本与最新版本（有新版本时提示升级）',
@@ -235,7 +241,7 @@ const HELP_EN = [
   '- `/new` `/reset` — start a new session',
   '- `/newg <name>` — create a group, add you, and start a separate session',
   '- `/cd <path>` — switch to that directory’s independent session',
-  '- `/ws list|save <name>|use <name>|remove <name>` — manage workspaces',
+  '- `/ws list|save <name>|use <name|GUI workspace>|remove <name>` — manage workspaces; `/ws <index>` opens a host GUI workspace and groups its session',
   '- `/status` — open a refreshable status card with context/token usage and pending actions',
   '- `/jobs [show <message-id>|retry <message-id>]` — reconcile queued/running/failed jobs and retry explicitly',
   '- `/version` — show the installed and latest versions',
@@ -415,14 +421,92 @@ async function handleWs(args: string, ctx: CommandContext): Promise<void> {
   const [sub, ...rest] = args.trim().split(/\s+/);
   const name = rest.join(' ').trim();
 
+  const guiWorkspaces = async (): Promise<GuiWorkspace[]> =>
+    ctx.guiWorkspaces === undefined ? [] : await ctx.guiWorkspaces.list().catch(() => []);
+
+  /**
+   * Switch the chat to a workspace and, when it came from the host GUI
+   * registry, remember the binding so the next session is adopted into that
+   * GUI workspace's roster (see the run-flow hook).
+   */
+  const switchTo = async (target: { cwd: string; label: string; gui?: GuiWorkspace }): Promise<void> => {
+    const previous = ctx.workspaces.cwdFor(ctx.scope) ?? ctx.defaultWorkspace;
+    const interrupted = target.cwd === previous
+      ? 0
+      : await ctx.activeRuns.interruptWorkspace(ctx.scope, previous);
+    ctx.workspaces.setCwd(ctx.scope, target.cwd);
+    const headingZh = target.gui === undefined
+      ? `已切换到工作空间：**${target.label}** → \`${target.cwd}\``
+      : `已切换到 GUI 工作区：**${target.label}** → \`${target.cwd}\``;
+    const headingEn = target.gui === undefined
+      ? `Switched to workspace **${target.label}** → \`${target.cwd}\``
+      : `Switched to GUI workspace **${target.label}** → \`${target.cwd}\``;
+    let noteZh = '';
+    let noteEn = '';
+    if (target.gui !== undefined) {
+      ctx.workspaces.setGuiBinding(ctx.scope, target.gui.id, target.gui.path);
+      const existing = ctx.sessions.getRaw(ctx.scope, target.cwd)?.sessionId;
+      if (existing !== undefined && ctx.guiAdopter !== undefined) {
+        const adopted = await ctx.guiAdopter.adopt(existing, target.gui.id);
+        if (adopted.ok) {
+          ctx.workspaces.markGuiAdopted(ctx.scope, existing);
+          noteZh = '已有会话已挂到该 GUI 工作区分组。';
+          noteEn = ' The existing session was adopted into that GUI workspace group.';
+        } else {
+          noteZh = `已有会话暂未挂组（${adopted.error ?? 'unknown'}），下一条消息会自动重试。`;
+          noteEn = ` The existing session could not be grouped yet (${adopted.error ?? 'unknown'}); the next message retries automatically.`;
+        }
+      } else {
+        noteZh = '下一条消息创建的会话会自动挂到该 GUI 工作区分组。';
+        noteEn = ' The session created by your next message is adopted into that GUI workspace group automatically.';
+      }
+    }
+    const interruptedZh = interrupted > 0 ? `已中断原工作区 ${String(interrupted)} 个运行中任务（会话数据保留）。` : '';
+    const interruptedEn = interrupted > 0 ? ` Interrupted ${String(interrupted)} running task(s) in the previous workspace (session data was preserved).` : '';
+    await reply(
+      ctx,
+      `${headingZh}；该工作区的会话会独立恢复。${interruptedZh}${noteZh}`,
+      `${headingEn}; its independent session will resume.${interruptedEn}${noteEn}`,
+    );
+  };
+
+  /**
+   * Resolve a name to a switch target: the host GUI registry first (exact
+   * title, then a unique prefix), then a named alias. Returns false when
+   * neither matches, so callers can decide how to report it.
+   */
+  const useTarget = async (query: string): Promise<boolean> => {
+    const guiTarget = resolveGuiWorkspace(await guiWorkspaces(), query);
+    if (guiTarget !== undefined) {
+      await switchTo({
+        cwd: guiTarget.path,
+        label: guiTarget.title === '' ? guiTarget.path : guiTarget.title,
+        gui: guiTarget,
+      });
+      return true;
+    }
+    const cwd = ctx.workspaces.getNamed(query);
+    if (cwd === undefined) return false;
+    ctx.workspaces.touchNamed(query);
+    await switchTo({ cwd, label: query });
+    return true;
+  };
+
   if (!sub || sub === 'list') {
     const current = ctx.workspaces.cwdFor(ctx.scope) ?? ctx.defaultWorkspace;
     const named = ctx.workspaces.listNamed();
     const index = ctx.workspaces.listIndex();
+    const gui = await guiWorkspaces();
     if (ctx.channel.sendCard) {
-      await ctx.channel.sendCard(ctx.chatId, renderWorkspaceCard({ current, index }));
+      await ctx.channel.sendCard(ctx.chatId, renderWorkspaceCard({ current, index, gui }));
       return;
     }
+    const guiLinesZh = gui.map((workspace, position) =>
+      `${String(position + 1)}. **${workspace.title === '' ? workspace.path : workspace.title}** → \`${workspace.path}\`${workspace.path === current ? ' ← 当前' : ''}`,
+    );
+    const guiLinesEn = gui.map((workspace, position) =>
+      `${String(position + 1)}. **${workspace.title === '' ? workspace.path : workspace.title}** → \`${workspace.path}\`${workspace.path === current ? ' ← current' : ''}`,
+    );
     const lines = Object.entries(named).map(
       ([key, value]) => `- **${key}** → \`${value}\`${value === current ? ' ← 当前' : ''}`,
     );
@@ -431,11 +515,19 @@ async function handleWs(args: string, ctx: CommandContext): Promise<void> {
       [
         `当前 cwd：\`${current}\``,
         '',
+        '**GUI 工作区**（`/ws <序号>` 打开并挂组）：',
+        ...(guiLinesZh.length > 0 ? guiLinesZh : ['（未发现宿主 GUI 工作区）']),
+        '',
+        '**命名工作空间**（`/ws use <名称>`）：',
         ...(lines.length > 0 ? lines : ['暂无命名工作空间。']),
       ].join('\n'),
       [
         `Current cwd: \`${current}\``,
         '',
+        '**GUI workspaces** (open and group with `/ws <index>`):',
+        ...(guiLinesEn.length > 0 ? guiLinesEn : ['(no host GUI workspaces found)']),
+        '',
+        '**Named workspaces** (`/ws use <name>`):',
         ...(Object.entries(named).length > 0
           ? Object.entries(named).map(([key, value]) => `- **${key}** → \`${value}\`${value === current ? ' ← current' : ''}`)
           : ['No named workspaces.']),
@@ -460,22 +552,8 @@ async function handleWs(args: string, ctx: CommandContext): Promise<void> {
       await reply(ctx, '用法：`/ws use <name>`', 'Usage: `/ws use <name>`');
       return;
     }
-    const cwd = ctx.workspaces.getNamed(name);
-    if (!cwd) {
-      await reply(ctx, `未找到工作空间：**${name}**`, `Workspace not found: **${name}**`);
-      return;
-    }
-    const previous = ctx.workspaces.cwdFor(ctx.scope) ?? ctx.defaultWorkspace;
-    const interrupted = cwd === previous
-      ? 0
-      : await ctx.activeRuns.interruptWorkspace(ctx.scope, previous);
-    ctx.workspaces.setCwd(ctx.scope, cwd);
-    ctx.workspaces.touchNamed(name);
-    await reply(
-      ctx,
-      `已切换到工作空间：**${name}** → \`${cwd}\`；该工作区的会话会独立恢复。${interrupted > 0 ? `已中断原工作区 ${String(interrupted)} 个运行中任务（会话数据保留）。` : ''}`,
-      `Switched to workspace **${name}** → \`${cwd}\`; its independent session will resume.${interrupted > 0 ? ` Interrupted ${String(interrupted)} running task(s) in the previous workspace (session data was preserved).` : ''}`,
-    );
+    if (await useTarget(name)) return;
+    await reply(ctx, `未找到工作空间：**${name}**`, `Workspace not found: **${name}**`);
     return;
   }
 
@@ -489,7 +567,35 @@ async function handleWs(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  await reply(ctx, '未知 `/ws` 子命令，请使用 list / save / use / remove。', 'Unknown `/ws` subcommand. Use list / save / use / remove.');
+  // A bare number addresses the host GUI registry (see `/ws list` numbering);
+  // any other bare word is a GUI title/prefix or a named alias, exactly as
+  // `/ws use <name>` resolves it.
+  if (/^\d+$/.test(sub)) {
+    const list = await guiWorkspaces();
+    const target = resolveGuiWorkspace(list, sub);
+    if (target === undefined) {
+      await reply(
+        ctx,
+        `GUI 工作区序号超范围：**${sub}**（现有 ${String(list.length)} 个，用 \`/ws list\` 查看）。`,
+        `GUI workspace index out of range: **${sub}** (${String(list.length)} available; see \`/ws list\`).`,
+      );
+      return;
+    }
+    await switchTo({
+      cwd: target.path,
+      label: target.title === '' ? target.path : target.title,
+      gui: target,
+    });
+    return;
+  }
+
+  if (await useTarget(sub)) return;
+
+  await reply(
+    ctx,
+    '未知 `/ws` 子命令，请使用 list / save <name> / use <name|GUI 工作区名> / remove <name>，或直接 `/ws <序号|GUI 工作区名>`。',
+    'Unknown `/ws` subcommand. Use list / save <name> / use <name|GUI workspace> / remove <name>, or `/ws <index|GUI workspace>`.',
+  );
 }
 
 export type StatusContext = Pick<

@@ -9,7 +9,7 @@ export const COMMAND_CATALOG: readonly CommandDefinition[] = [
   { names: ['/new', '/reset'], area: 'session', zh: '开始新会话', en: 'start a new session' },
   { names: ['/newg'], area: 'session', zh: '`<群名>` — 新建群聊并开始独立会话', en: '`<name>` — create a group and start an independent session' },
   { names: ['/cd'], area: 'workspace', zh: '`<path>` — 切换到该目录的独立会话', en: '`<path>` — switch to that directory’s independent session' },
-  { names: ['/ws'], area: 'workspace', zh: '`list|save <name>|use <name>|remove <name>` — 管理工作空间', en: '`list|save <name>|use <name>|remove <name>` — manage workspaces' },
+  { names: ['/ws'], area: 'workspace', zh: '`list|save <name>|use <name|GUI 工作区名>|remove <name>` — 管理工作空间；`/ws <序号>` 打开宿主 GUI 工作区并挂组', en: '`list|save <name>|use <name|GUI workspace>|remove <name>` — manage workspaces; `/ws <index>` opens a host GUI workspace and groups its session' },
   { names: ['/status'], area: 'operations', zh: '查看状态、上下文/token 与待处理卡', en: 'show status, context/token usage, and pending cards' },
   { names: ['/jobs'], area: 'operations', zh: '`[show <消息ID>|retry <消息ID>]` — 对账并重试任务', en: '`[show <message-id>|retry <message-id>]` — reconcile and retry jobs' },
   { names: ['/version'], area: 'operations', zh: '查看当前与最新版本', en: 'show installed and latest versions' },

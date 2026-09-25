@@ -25,6 +25,7 @@ import type { SessionStore } from '../session/store.js';
 import type { SessionArchive } from '../session/archive.js';
 import type { RoleDefinition } from '../bot/role-store.js';
 import type { WorkspaceStore } from '../workspace/store.js';
+import type { GuiWorkspaceAdopter } from '../workspace/adopt.js';
 import type { GitWorktreeManager } from '../workspace/git-worktree.js';
 import type { CardStreamController, StreamingChannel } from './types.js';
 import type { RunCardAnchors } from './run-card-anchors.js';
@@ -46,6 +47,39 @@ import { renderChannelContext, type ChannelContext } from './channel-context.js'
  */
 export const INTERIM_BUBBLE_PAUSE_MS = 1200;
 
+/**
+ * Adopt a freshly bound session into the GUI workspace the chat was switched
+ * to (`/ws <index>` / `/ws use <gui title>`), so the host GUI lists it under
+ * that workspace instead of the ungrouped bucket. Best-effort by design: the
+ * binding is only marked adopted after the gateway confirms, so a failure is
+ * retried by the next turn. The gateway rejects adoptions whose stored cwd
+ * does not resolve to the workspace path (for example isolated worktrees or
+ * directories the GUI registry moved), which is why the run cwd is checked
+ * against the binding before calling out.
+ */
+async function adoptIntoGuiWorkspace(
+  input: RunFlowInput,
+  sessionId: string,
+  workspaceCwd: string,
+): Promise<void> {
+  const adopter = input.guiAdopter;
+  if (adopter === undefined) return;
+  const binding = input.workspaces.getGuiBinding(input.scope);
+  if (binding === undefined || binding.adoptedSessionId === sessionId) return;
+  if (binding.workspacePath !== workspaceCwd) return;
+  const adopted = await adopter.adopt(sessionId, binding.workspaceId);
+  if (!adopted.ok) {
+    log.warn('workspace', 'gui-adopt-failed', {
+      sessionId,
+      workspaceId: binding.workspaceId,
+      error: adopted.error,
+    });
+    return;
+  }
+  input.workspaces.markGuiAdopted(input.scope, sessionId);
+  log.info('workspace', 'gui-adopted', { sessionId, workspaceId: binding.workspaceId });
+}
+
 export interface RunFlowInput {
   scope: string;
   chatId: string;
@@ -61,6 +95,8 @@ export interface RunFlowInput {
   workspaces: WorkspaceStore;
   /** Workspace selected when the inbound batch was queued; immutable for this run. */
   workspaceCwd?: string;
+  /** Adopts sessions created for a `/ws`-selected GUI workspace into its roster. */
+  guiAdopter?: GuiWorkspaceAdopter;
   workspaceManager?: GitWorktreeManager;
   activeRuns: ActiveRuns;
   runPolicies?: RunPolicyStore;
@@ -515,6 +551,7 @@ async function runAttempt(
               activeSessionId = event.sessionId;
               activeModel = modelRoute(input.provider, event.model ?? input.model);
               input.sessions.set(input.scope, event.sessionId, workspaceCwd);
+              await adoptIntoGuiWorkspace(input, event.sessionId, workspaceCwd);
             }
             if (event.type === 'thinking') await checkpoint('thinking');
             if (event.type === 'tool_use') await checkpoint('tool', event.name);

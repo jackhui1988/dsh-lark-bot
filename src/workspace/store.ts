@@ -2,8 +2,22 @@ import { readFile } from 'node:fs/promises';
 import { writeFileAtomic } from '../platform/atomic-write.js';
 import { log } from '../core/logger.js';
 
+interface ChatWorkspace {
+  cwd: string;
+  /**
+   * Host GUI workspace this chat's cwd was selected from (`/ws <n>` /
+   * `/ws use <title>`). A plain `/cd` replaces the entry and drops the
+   * binding, so adoption only follows explicit GUI selections.
+   */
+  guiWorkspaceId?: string;
+  /** Registry path behind `guiWorkspaceId`, validated against the run cwd. */
+  guiWorkspacePath?: string;
+  /** Session already adopted into that workspace; re-adoption is skipped. */
+  guiAdoptedSessionId?: string;
+}
+
 interface WorkspaceData {
-  chats: Record<string, { cwd: string }>;
+  chats: Record<string, ChatWorkspace>;
   named: Record<string, string>;
   lastUsed: Record<string, number>;
 }
@@ -46,6 +60,37 @@ export class WorkspaceStore {
     delete this.data.chats[scopeId];
     this.schedulePersist();
     return true;
+  }
+
+  /** Attach (or refresh) the GUI workspace binding of the chat's current cwd. */
+  setGuiBinding(scopeId: string, workspaceId: string, workspacePath: string): void {
+    const current = this.data.chats[scopeId];
+    if (current === undefined) return;
+    this.data.chats[scopeId] = {
+      cwd: current.cwd,
+      guiWorkspaceId: workspaceId,
+      guiWorkspacePath: workspacePath,
+    };
+    this.schedulePersist();
+  }
+
+  getGuiBinding(scopeId: string):
+    | { workspaceId: string; workspacePath: string; adoptedSessionId: string | undefined }
+    | undefined {
+    const entry = this.data.chats[scopeId];
+    if (entry?.guiWorkspaceId === undefined || entry.guiWorkspacePath === undefined) return undefined;
+    return {
+      workspaceId: entry.guiWorkspaceId,
+      workspacePath: entry.guiWorkspacePath,
+      adoptedSessionId: entry.guiAdoptedSessionId,
+    };
+  }
+
+  markGuiAdopted(scopeId: string, sessionId: string): void {
+    const entry = this.data.chats[scopeId];
+    if (entry?.guiWorkspaceId === undefined) return;
+    this.data.chats[scopeId] = { ...entry, guiAdoptedSessionId: sessionId };
+    this.schedulePersist();
   }
 
   listNamed(): Record<string, string> {
