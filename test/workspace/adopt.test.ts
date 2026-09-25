@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,15 @@ interface Recorded {
 
 const servers: Server[] = [];
 const roots: string[] = [];
+
+// Adoption is opt-in (the harness owns sessions with a single-writer lease),
+// so these cases exercise the enabled path; the default is covered below.
+beforeEach(() => {
+  process.env.DSH_LARK_GUI_ADOPT = '1';
+});
+afterEach(() => {
+  delete process.env.DSH_LARK_GUI_ADOPT;
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -120,5 +129,21 @@ describe('GuiWorkspaceAdopter', () => {
     await adopter.adopt('session-one', 'ws-a');
     await adopter.adopt('session-two', 'ws-b');
     expect(recorded.map((entry) => entry.cookie)).toEqual(['dsh_session=abc', 'dsh_session=abc']);
+  });
+});
+
+describe('gui adoption opt-in', () => {
+  it('is disabled unless DSH_LARK_GUI_ADOPT=1 and makes no request', async () => {
+    const { baseUrl, recorded, home } = await startStub((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ result: { ok: true } }));
+    });
+    delete process.env.DSH_LARK_GUI_ADOPT;
+    const adopter = new GuiWorkspaceAdopter({ baseUrl, dshHome: home });
+    expect(await adopter.adopt('session-abc', 'ws-jack')).toEqual({
+      ok: false,
+      error: 'gui adoption disabled',
+    });
+    expect(recorded).toHaveLength(0);
   });
 });

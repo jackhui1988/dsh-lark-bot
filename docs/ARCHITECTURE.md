@@ -87,10 +87,11 @@ TUI/WebUI 的 active session 不参与 binding 决策。
 首次启动无凭据时打印二维码完成一次性绑定。
 
 宿主 dsh Web 的工作区注册表（`$DSH_HOME/storages/workspace.json`）由 `src/workspace/gui-registry.ts`
-只读纳入 `/ws` 导航；选中 GUI 工作区后，`src/workspace/adopt.ts` 通过本地 web 网关的
-`session/create`（RPC 名 `session/create`，参数 `payload.args.request`）**幂等认领**该会话，使其进入
-对应工作区分组。该路径只依赖 `DSH_LARK_WEB_URL`（默认 `http://127.0.0.1:3080`）与 loopback 信任，
-不引入新的环境变量或对外端口；网关不可用时仅降级为「未分组」，不影响任务执行。
+只读纳入 `/ws` 导航。**GUI 挂组默认关闭**：`src/workspace/adopt.ts` 的 `session/create` 认领需要
+`DSH_LARK_GUI_ADOPT=1`，因为 harness 的 Session 是单写者 lease 语义——SDK runtime 持有的会话 Web 无法
+认领，而 Web 先认领又会让 runtime 的下一次 prompt 失败；只有会话归 Web 侧所有（`web` adapter）时才成立。
+开启后仍只依赖 `DSH_LARK_WEB_URL`（默认 `http://127.0.0.1:3080`）与 loopback 信任，不引入新端口；
+网关不可用或认领被拒时只降级为「未分组」，不影响任务执行。
 
 ## 关键决策 · Key Decisions
 

@@ -9,6 +9,21 @@ export interface GuiAdopterOptions {
   dshHome: string;
 }
 
+/**
+ * Whether the bridge may adopt its sessions into a host GUI workspace.
+ *
+ * Off by default: the harness owns each Session with a single-writer lease, so
+ * adopting a session that the SDK runtime still holds either fails
+ * (`SessionAlreadyOwnedError`) or — when the web grabs it first — makes the
+ * runtime's next prompt fail, because the runtime cannot take back a session
+ * another process owns. Adoption is therefore opt-in for deployments whose
+ * sessions the bridge has finished with (for example a GUI-owned `web`
+ * adapter), never for the default SDK runtime.
+ */
+export function guiAdoptionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.DSH_LARK_GUI_ADOPT === '1';
+}
+
 interface RpcEnvelope {
   result?: {
     ok?: boolean;
@@ -59,11 +74,13 @@ export class GuiWorkspaceAdopter {
   }
 
   /**
-   * Adopt one session into one GUI workspace. Idempotent on the gateway side;
-   * failures are reported, never thrown, so the run flow can log and retry on
-   * the next turn.
+   * Adopt one session into one GUI workspace. Disabled unless
+   * `DSH_LARK_GUI_ADOPT=1`; see {@link guiAdoptionEnabled} for why. Idempotent
+   * on the gateway side; failures are reported, never thrown, so the run flow
+   * can log and retry on the next turn.
    */
   async adopt(sessionId: string, workspaceId: string): Promise<{ ok: boolean; error?: string }> {
+    if (!guiAdoptionEnabled()) return { ok: false, error: 'gui adoption disabled' };
     try {
       const cookie = await this.ensureCookie();
       const response = await fetch(`${this.options.baseUrl}/api/session/create`, {

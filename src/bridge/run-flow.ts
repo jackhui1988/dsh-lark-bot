@@ -26,6 +26,7 @@ import type { SessionArchive } from '../session/archive.js';
 import type { RoleDefinition } from '../bot/role-store.js';
 import type { WorkspaceStore } from '../workspace/store.js';
 import type { GuiWorkspaceAdopter } from '../workspace/adopt.js';
+import { guiAdoptionEnabled } from '../workspace/adopt.js';
 import type { GitWorktreeManager } from '../workspace/git-worktree.js';
 import type { CardStreamController, StreamingChannel } from './types.js';
 import type { RunCardAnchors } from './run-card-anchors.js';
@@ -63,7 +64,7 @@ async function adoptIntoGuiWorkspace(
   workspaceCwd: string,
 ): Promise<void> {
   const adopter = input.guiAdopter;
-  if (adopter === undefined) return;
+  if (adopter === undefined || !guiAdoptionEnabled()) return;
   const binding = input.workspaces.getGuiBinding(input.scope);
   if (binding === undefined || binding.adoptedSessionId === sessionId) return;
   if (binding.workspacePath !== workspaceCwd) return;

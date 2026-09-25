@@ -25,7 +25,7 @@ import type { SendOptions } from '../bridge/send-options.js';
 import type { WorkspaceStore } from '../workspace/store.js';
 import { renderWorkspaceCard } from '../card/workspace-card.js';
 import { resolveGuiWorkspace, type GuiWorkspace, type GuiWorkspaceRegistry } from '../workspace/gui-registry.js';
-import type { GuiWorkspaceAdopter } from '../workspace/adopt.js';
+import { guiAdoptionEnabled, type GuiWorkspaceAdopter } from '../workspace/adopt.js';
 import {
   renderStatusCard,
   statusCardMarkdown,
@@ -446,7 +446,10 @@ async function handleWs(args: string, ctx: CommandContext): Promise<void> {
     if (target.gui !== undefined) {
       ctx.workspaces.setGuiBinding(ctx.scope, target.gui.id, target.gui.path);
       const existing = ctx.sessions.getRaw(ctx.scope, target.cwd)?.sessionId;
-      if (existing !== undefined && ctx.guiAdopter !== undefined) {
+      if (!guiAdoptionEnabled()) {
+        noteZh = '（本部署未开启 GUI 挂组：会话仍留在「未分组」，需要 DSH_LARK_GUI_ADOPT=1 且由 web adapter 拥有会话）';
+        noteEn = ' (GUI grouping is off in this deployment: the session stays under "Ungrouped"; it needs DSH_LARK_GUI_ADOPT=1 with web-adapter-owned sessions)';
+      } else if (existing !== undefined && ctx.guiAdopter !== undefined) {
         const adopted = await ctx.guiAdopter.adopt(existing, target.gui.id);
         if (adopted.ok) {
           ctx.workspaces.markGuiAdopted(ctx.scope, existing);

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,14 @@ import type { GuiWorkspace } from '../../src/workspace/gui-registry.js';
 
 const roots: string[] = [];
 const flushes: Array<() => Promise<void>> = [];
+// GUI adoption is opt-in (single-writer lease); these cases cover the enabled
+// path and the disabled default has its own case below.
+beforeEach(() => {
+  process.env.DSH_LARK_GUI_ADOPT = '1';
+});
+afterEach(() => {
+  delete process.env.DSH_LARK_GUI_ADOPT;
+});
 afterEach(async () => {
   await Promise.all(flushes.splice(0).map((flush) => flush()));
   await Promise.all(
@@ -121,5 +129,18 @@ describe('/ws with the host GUI registry', () => {
     expect(workspaces.getGuiBinding('chat-a')).toBeDefined();
     workspaces.setCwd('chat-a', '/tmp/elsewhere');
     expect(workspaces.getGuiBinding('chat-a')).toBeUndefined();
+  });
+});
+
+describe('/ws with GUI adoption disabled (default)', () => {
+  it('still switches, records the binding, and says grouping is off', async () => {
+    delete process.env.DSH_LARK_GUI_ADOPT;
+    const { ctx, adopt, workspaces, sessions, sendMarkdown } = await makeHarness();
+    sessions.set('chat-a', 'session-existing', '/data/projects/Jack');
+    await tryHandleCommand('/ws 2', ctx);
+    expect(workspaces.cwdFor('chat-a')).toBe('/data/projects/Jack');
+    expect(workspaces.getGuiBinding('chat-a')?.workspaceId).toBe('ws-jack');
+    expect(adopt).not.toHaveBeenCalled();
+    expect(sendMarkdown.mock.calls[0]?.[1] as string).toContain('未分组');
   });
 });

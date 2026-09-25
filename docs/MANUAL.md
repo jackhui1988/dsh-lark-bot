@@ -381,9 +381,12 @@ dsh-lark-bot guardian uninstall
 - `sessions.json` 按 `scope + workspace cwd` 保存独立 native session、transcript 与指标；`/cd` / `/ws use`
   会中断原工作区仍在运行的任务，但不删除数据，切回会续接。`/new` / `/reset` 只清空当前工作区。
 - 通过 `/ws <序号>` / `/ws <GUI 工作区名>` 选中宿主 GUI 工作区时，`workspaces.json` 会在该 scope 上记
-  `guiWorkspaceId` / `guiWorkspacePath`；会话首次落盘后由桥接调用本地 dsh web 的 `session/create` 幂等
-  「认领」，使该会话出现在 GUI 的对应工作区分组下（否则只会在「未分组」）。普通 `/cd` 会清掉该绑定；
-  认领失败（例如实际执行目录是隔离 worktree，或 GUI 注册表路径已改）会记日志并在下一轮自动重试。
+  `guiWorkspaceId` / `guiWorkspacePath`，`/ws list` 也能列出宿主注册表；工作区切换本身**始终可用**。
+- **GUI 挂组（把会话认领进工作区分组）默认关闭**，需 `DSH_LARK_GUI_ADOPT=1` 显式开启。原因：harness 对每个
+  Session 是**单写者 + 持有 lease**，SDK runtime 正在持有的会话 Web 侧无法认领（`SessionAlreadyOwnedError`）；
+  若 Web 先拿到所有权，runtime 的下一次 prompt 会失败——所以默认 SDK runtime 下不认领，会话留在「未分组」。
+  该开关只适合会话已归 Web 侧所有（`DSH_LARK_ADAPTER=web`）或 runtime 已释放该会话的部署。
+  普通 `/cd` 会清掉 GUI 绑定；开启后认领失败（例如执行目录是隔离 worktree）会记日志并在下一轮重试。
 - 同一 scope 默认允许 2 个任务并行（`/concurrency` 或 `DSH_LARK_SCOPE_CONCURRENCY` 调整，
   1 为严格串行）；并行 run 各持独立 dsh session 与 runId。SDK runtime 以 `scope + workspace`
   为停止域，并发 session 也彼此隔离；卡片停止只终止对应 run，`/stop` 仍终止当前 scope 内全部
