@@ -90,9 +90,11 @@ dsh plugin --profile dsh-lark remove dsh-lark-bot
 | --- | --- |
 | `/new` `/reset` | 清空当前会话 |
 | `/cd <path>` | 切换工作目录 |
-| `/ws list` | 查看工作空间导航卡片 |
-| `/ws save <name>` | 保存当前工作空间 |
-| `/ws use <name>` | 切换到命名工作空间 |
+| `/ws list` | 查看工作空间导航卡片：宿主 GUI 工作区（带序号）+ 命名工作空间 |
+| `/ws <序号>` | 打开该 GUI 工作区，并把本会话自动挂进该工作区分组 |
+| `/ws <GUI 工作区名>` | 同上，按 title 或唯一前缀匹配（如 `/ws sissi`、`/ws Jack`） |
+| `/ws save <name>` | 把当前目录保存为命名工作空间 |
+| `/ws use <name>` | 切换到 GUI 工作区（优先）或命名工作空间 |
 | `/ws remove <name>` | 删除命名工作空间 |
 | `/status` | 查看并原位刷新 scope / cwd / 模型 / session / run / context / token / pending / 任务账本 |
 | `/version` | 查看当前版本与 npm 最新版本 |
@@ -378,6 +380,10 @@ dsh-lark-bot guardian uninstall
 - 每个 scope + workspace 默认保存最近 40 条对话（`/retention` 调整，`DSH_LARK_RETENTION_MSGS` 配置默认值）。
 - `sessions.json` 按 `scope + workspace cwd` 保存独立 native session、transcript 与指标；`/cd` / `/ws use`
   会中断原工作区仍在运行的任务，但不删除数据，切回会续接。`/new` / `/reset` 只清空当前工作区。
+- 通过 `/ws <序号>` / `/ws <GUI 工作区名>` 选中宿主 GUI 工作区时，`workspaces.json` 会在该 scope 上记
+  `guiWorkspaceId` / `guiWorkspacePath`；会话首次落盘后由桥接调用本地 dsh web 的 `session/create` 幂等
+  「认领」，使该会话出现在 GUI 的对应工作区分组下（否则只会在「未分组」）。普通 `/cd` 会清掉该绑定；
+  认领失败（例如实际执行目录是隔离 worktree，或 GUI 注册表路径已改）会记日志并在下一轮自动重试。
 - 同一 scope 默认允许 2 个任务并行（`/concurrency` 或 `DSH_LARK_SCOPE_CONCURRENCY` 调整，
   1 为严格串行）；并行 run 各持独立 dsh session 与 runId。SDK runtime 以 `scope + workspace`
   为停止域，并发 session 也彼此隔离；卡片停止只终止对应 run，`/stop` 仍终止当前 scope 内全部

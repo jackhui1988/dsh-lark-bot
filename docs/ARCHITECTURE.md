@@ -83,9 +83,14 @@ TUI/WebUI 的 active session 不参与 binding 决策。
 `dsh-lark-bot setup`）把包装进 profile，dsh 启动时以标准插件方式加载
 `dsh-lark-bot/plugin` —— 桥接引擎**在 dsh 进程内**运行（飞书 WebSocket 通道、会话/工作区、
 卡片、通知回调），并按需拉起官方 dsh SDK runtime 子进程执行 agent 任务。可选 `src/service/`
-把这同一个 dsh profile 交给 OS 用户服务常驻，不产生第二套桥接引擎；默认安装的「安全网守护」
-是唯一独立于 dsh 的救援进程（见关键决策 8）。
+把这同一个 dsh profile 交给 OS 用户服务常驻，不产生第二套桥接引擎；默认安装的「安全网守护」是唯一独立于 dsh 的救援进程（见关键决策 8）。
 首次启动无凭据时打印二维码完成一次性绑定。
+
+宿主 dsh Web 的工作区注册表（`$DSH_HOME/storages/workspace.json`）由 `src/workspace/gui-registry.ts`
+只读纳入 `/ws` 导航；选中 GUI 工作区后，`src/workspace/adopt.ts` 通过本地 web 网关的
+`session/create`（RPC 名 `session/create`，参数 `payload.args.request`）**幂等认领**该会话，使其进入
+对应工作区分组。该路径只依赖 `DSH_LARK_WEB_URL`（默认 `http://127.0.0.1:3080`）与 loopback 信任，
+不引入新的环境变量或对外端口；网关不可用时仅降级为「未分组」，不影响任务执行。
 
 ## 关键决策 · Key Decisions
 
