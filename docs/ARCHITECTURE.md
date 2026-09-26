@@ -53,7 +53,7 @@
 DeepSeek Harness (dsh) ──▶ DeepSeek V4 Pro / Flash
 ```
 
-`web` adapter 另有显式投影路径：飞书 `/session` 确认 → `SessionProjectionStore` 独占保存
+旧 `WebDshAdapter`（`web-legacy`，保留在仓库中不再作为默认 `web` 选择）另有显式投影路径：飞书 `/session` 确认 → `SessionProjectionStore` 独占保存
 `scope + workspace → sessionId + cursor` → `session.history` 初始/重连补齐 → `/api/events.mux`
 实时事件 → transcript 卡与 bot-owned 实时卡。DSH append-only session log 始终是唯一真源；
 TUI/WebUI 的 active session 不参与 binding 决策。
@@ -87,11 +87,11 @@ TUI/WebUI 的 active session 不参与 binding 决策。
 首次启动无凭据时打印二维码完成一次性绑定。
 
 宿主 dsh Web 的工作区注册表（`$DSH_HOME/storages/workspace.json`）由 `src/workspace/gui-registry.ts`
-只读纳入 `/ws` 导航。**GUI 挂组默认关闭**：`src/workspace/adopt.ts` 的 `session/create` 认领需要
-`DSH_LARK_GUI_ADOPT=1`，因为 harness 的 Session 是单写者 lease 语义——SDK runtime 持有的会话 Web 无法
-认领，而 Web 先认领又会让 runtime 的下一次 prompt 失败；只有会话归 Web 侧所有（`web` adapter）时才成立。
-开启后仍只依赖 `DSH_LARK_WEB_URL`（默认 `http://127.0.0.1:3080`）与 loopback 信任，不引入新端口；
-网关不可用或认领被拒时只降级为「未分组」，不影响任务执行。
+只读纳入 `/ws` 导航，选中的工作区记进 `workspaces.json`（`guiWorkspaceId` / `guiWorkspacePath`），并在
+run-flow 里作为 `AgentRunOptions.workspaceId` 交给 adapter。只有 `web` adapter 会用它创建会话
+（`session/create` 先 create 后 `attachSession`），会话因此**创建即入册**该工作区分组；默认 `sdk` adapter
+由桥接进程持有会话（单写者 lease），Web 无法接管，会话停留在「未分组」。该路径只依赖
+`DSH_LARK_WEB_URL`（默认 `http://127.0.0.1:3080`）与 loopback 信任，不引入新端口。
 
 ## 关键决策 · Key Decisions
 
@@ -102,7 +102,12 @@ TUI/WebUI 的 active session 不参与 binding 决策。
    新版（dsh ≥ 0.1.5 起不再向 session 总线发 chunk）改由 `assistant/message` 的 reasoning / text
    块按步渲染，`chunkedSteps` 逐 step 去重，卡片不会为空也不会重复；
    `DSH_LARK_ADAPTER=acp` 走官方 `@deepseek-ai/dsh-acp`（审批卡）；`headless` 保留 legacy fallback；
-   `DSH_LARK_ADAPTER=web` 走本地 dsh web agent（`session.prompt` + `/api/events.mux`，单写者，根治双写）。
+   `DSH_LARK_ADAPTER=web` 走 `WebRpcDshAdapter`（`src/adapters/dsh/web-rpc-adapter.ts`）：以
+   `session/create`（可带 `/ws` 选中的 `workspaceId`，会话**创建即入册**该 GUI 工作区）、
+   `session/prompt`（queue）与 `session/cancel` 驱动本地 web 实例，并 tail `$DSH_HOME/sessions/**`
+   的会话日志（多帧 zstd，逐帧解码后复用 `sdk-translate` 翻译）取得进度，因此**不必实现网关的
+   Remote stream 协议**；网页端是唯一写者，会话在 GUI 里可继续、可分组，跨实例续接天然可用。
+   审批提示由 GUI 侧回答（该路径桥接没有审批通道）；`provider`/`model` 路由由 web 会话自身的模型设置决定。
    `web` adapter 声明 `resumeCapable = true` 并实现 `canResume`（web 服务端是每个 session 的单写者，
    跨连接持留），因此 run-flow 会复用同一 native session，前一轮记忆得以延续；adapter 被 dispose 后
    才拒绝复用，其余情况交给 run-flow 的 fresh-session 兜底。

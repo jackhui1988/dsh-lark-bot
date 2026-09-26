@@ -596,11 +596,15 @@ export async function buildAgentAdapter(
   `~/.dsh/profiles/dsh-lark-acp`（`dsh-base` + `dsh-acp`），以 `ClientSideConnection` 连接
   ACP server，`session/request_permission` 映射审批卡；会话每次全新。
 - `headless`：`DshAdapter`（`src/adapters/dsh/adapter.ts`），legacy 子进程 JSONL 翻译。
-- `web`：`WebDshAdapter`（`src/adapters/dsh/web-adapter.ts`），驱动本地 dsh web agent
-  （`session.create` / `session.prompt` + `/api/events.mux` WebSocket），网页端成为**唯一写者**，
-  从根上消除多写者会话损坏，跨实例续接天然可用。它声明 `resumeCapable = true` 并实现
-  `canResume`，因此 run-flow 复用同一 native session、延续前一轮记忆。`SessionProjectionBridge`
-  只消费用户在飞书显式确认的 binding；WebUI/TUI 的 open/resume/activity 不会自动切换或广播。
+- `web`：`WebRpcDshAdapter`（`src/adapters/dsh/web-rpc-adapter.ts`），驱动本地 dsh web 实例：
+  斜杠式 typert RPC（`POST /api/session/create`、`/api/session/prompt`、`/api/session/cancel`，信封
+  `payload.args.request`）+ tail `$DSH_HOME/sessions/**` 的会话日志（多帧 zstd 逐帧解码）。网页端是
+  唯一写者：会话创建即归 Web 所有，GUI 里可直接看到/继续，`/ws` 选中的 GUI 工作区会作为
+  `workspaceId` 传入从而**创建即入册**。声明 `resumeCapable = true`（`canResume` 恒真：Web 持有会话），
+  run-flow 因此复用同一 native session。该路径没有审批通道（审批在 GUI 回答），模型路由由 web 会话决定。
+- `web-legacy`：`WebDshAdapter`（`src/adapters/dsh/web-adapter.ts`），针对旧网关
+  （`session.create` + `/api/events.mux`）的实现，仍随包提供但不再被 `DSH_LARK_ADAPTER=web` 选中；
+  对应的 `SessionProjectionBridge` 契约见 §3.1。
 
 翻译与 runtime 管理模块：`src/adapters/dsh/sdk-translate.ts`（SDK `session.event` →
 `AgentEvent`，并将本地图片上传为 durable attachment ref + 原生 image block）、
@@ -610,7 +614,7 @@ export async function buildAgentAdapter(
 `./sdk-server` 缺失时回退官方 server，避免 `ERR_PACKAGE_PATH_NOT_EXPORTED`）、
 `event-channel.ts`（有序事件队列）。
 
-### 3.1 显式 session 投影契约
+### 3.1 显式 session 投影契约（`web-legacy` adapter）
 
 - `src/session/projection-protocol.ts`：rc.8 `session.list` / `session.history` / `session.prompt` 与
   `/api/events.mux` 的窄类型 facade；prompt 接受 bridge 生成的 `rpcId` 作为可信回环关联。

@@ -382,11 +382,11 @@ dsh-lark-bot guardian uninstall
   会中断原工作区仍在运行的任务，但不删除数据，切回会续接。`/new` / `/reset` 只清空当前工作区。
 - 通过 `/ws <序号>` / `/ws <GUI 工作区名>` 选中宿主 GUI 工作区时，`workspaces.json` 会在该 scope 上记
   `guiWorkspaceId` / `guiWorkspacePath`，`/ws list` 也能列出宿主注册表；工作区切换本身**始终可用**。
-- **GUI 挂组（把会话认领进工作区分组）默认关闭**，需 `DSH_LARK_GUI_ADOPT=1` 显式开启。原因：harness 对每个
-  Session 是**单写者 + 持有 lease**，SDK runtime 正在持有的会话 Web 侧无法认领（`SessionAlreadyOwnedError`）；
-  若 Web 先拿到所有权，runtime 的下一次 prompt 会失败——所以默认 SDK runtime 下不认领，会话留在「未分组」。
-  该开关只适合会话已归 Web 侧所有（`DSH_LARK_ADAPTER=web`）或 runtime 已释放该会话的部署。
-  普通 `/cd` 会清掉 GUI 绑定；开启后认领失败（例如执行目录是隔离 worktree）会记日志并在下一轮重试。
+- **让飞书会话出现在 GUI 工作区分组下**：把 adapter 切到 `DSH_LARK_ADAPTER=web`（会话由本地 dsh web
+  创建并独占）。此时 `/ws <序号>` / `/ws <名字>` 选中的 GUI 工作区会作为 `workspaceId` 传入
+  `session/create`，会话**创建即入册**，GUI 分组与侧边栏都能直接看到、也能在浏览器里继续对话。
+  默认的 `sdk` adapter 由桥接进程持有会话（单写者 lease），Web 无法认领，因此会话只会落在「未分组」；
+  `/ws` 的列目录与切换在两种 adapter 下都可用。
 - 同一 scope 默认允许 2 个任务并行（`/concurrency` 或 `DSH_LARK_SCOPE_CONCURRENCY` 调整，
   1 为严格串行）；并行 run 各持独立 dsh session 与 runId。SDK runtime 以 `scope + workspace`
   为停止域，并发 session 也彼此隔离；卡片停止只终止对应 run，`/stop` 仍终止当前 scope 内全部

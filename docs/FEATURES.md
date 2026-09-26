@@ -18,9 +18,9 @@
 - Git 仓库内为每个会话自动创建隔离 worktree 项目工作区，多项目互不干扰。
 - `/ws` 直接对接宿主 dsh Web 的工作区注册表：`/ws list` 按序编号列出 GUI 工作区，`/ws <序号>` 或
   `/ws <工作区名>` 一键切换到该目录并开独立会话；命名工作空间 `/ws save|use|remove` 语义保持不变，
-  两个命名空间互不覆盖。把会话「认领进 GUI 工作区分组」的能力默认关闭（`DSH_LARK_GUI_ADOPT=1` 才开）：
-  harness 的 Session 为单写者 lease 语义，SDK runtime 持有期间 Web 无法认领，强行认领会让该会话的
-  下一次运行失败，因此只在会话归 Web 侧所有的部署下启用。
+  两个命名空间互不覆盖。配合 `DSH_LARK_ADAPTER=web`（会话归本地 dsh web 所有）时，选中的 GUI 工作区
+  直接作为 `session/create` 的 `workspaceId`，会话创建即出现在该工作区分组下；默认 `sdk` adapter 下
+  桥接进程持有会话（单写者 lease），GUI 无法认领，会话停留在「未分组」。
 
 ## 2. 消息与任务可靠性
 
