@@ -148,7 +148,28 @@ export class WebRpcDshAdapter implements AgentAdapter {
   }
 
   private async ensureSession(options: AgentRunOptions): Promise<string> {
-    if (options.sessionId !== undefined) return options.sessionId;
+    if (options.sessionId !== undefined) {
+      // A chat that keeps its native session but switches to a GUI workspace
+      // must still end up in that workspace's roster: `session/create` with
+      // both identities is the idempotent adoption (create-or-attach) the
+      // gateway exposes, and the web already owns the session, so there is no
+      // ownership fight. Failures only cost grouping, never the run.
+      if (options.workspaceId !== undefined) {
+        try {
+          await this.rpc('session/create', {
+            sessionId: options.sessionId,
+            workspaceId: options.workspaceId,
+          });
+        } catch (error) {
+          log.warn('web-rpc', 'attach-failed', {
+            sessionId: options.sessionId,
+            workspaceId: options.workspaceId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      return options.sessionId;
+    }
     const created = await this.rpc<{ sessionId?: string }>(
       'session/create',
       options.workspaceId === undefined

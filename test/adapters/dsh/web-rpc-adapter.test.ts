@@ -245,4 +245,28 @@ describe('WebRpcDshAdapter', () => {
     expect(remaining.at(-1)).toEqual({ type: 'done', sessionId: SESSION_ID, terminationReason: 'interrupted' });
     expect(gateway.calls.some((call) => call.method === 'session/cancel')).toBe(true);
   });
+
+  it('attaches an already-bound session to the selected GUI workspace', async () => {
+    const { home, logPath } = await makeHome();
+    const gateway = await startGateway((path) => {
+      void appendFile(path, frame({ type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } }));
+    }, logPath);
+    const adapter = new WebRpcDshAdapter({ baseUrl: gateway.baseUrl, dshHome: home, model: undefined, pollIntervalMs: 25 });
+    const run = adapter.run({
+      runId: 'run-5',
+      prompt: 'ping',
+      cwd: '/data/projects/Jack',
+      sessionId: SESSION_ID,
+      workspaceId: 'ws-jack',
+      model: undefined,
+      images: undefined,
+      stopGraceMs: undefined,
+    });
+    await collect(run.events);
+    expect(gateway.calls[0]).toMatchObject({
+      method: 'session/create',
+      body: { payload: { args: { request: { sessionId: SESSION_ID, workspaceId: 'ws-jack' } } } },
+    });
+    expect(gateway.calls.some((call) => call.method === 'session/prompt')).toBe(true);
+  });
 });
