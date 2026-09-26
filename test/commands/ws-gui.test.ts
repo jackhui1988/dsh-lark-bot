@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,14 +10,6 @@ import type { GuiWorkspace } from '../../src/workspace/gui-registry.js';
 
 const roots: string[] = [];
 const flushes: Array<() => Promise<void>> = [];
-// GUI adoption is opt-in (single-writer lease); these cases cover the enabled
-// path and the disabled default has its own case below.
-beforeEach(() => {
-  process.env.DSH_LARK_GUI_ADOPT = '1';
-});
-afterEach(() => {
-  delete process.env.DSH_LARK_GUI_ADOPT;
-});
 afterEach(async () => {
   await Promise.all(flushes.splice(0).map((flush) => flush()));
   await Promise.all(
@@ -35,7 +27,6 @@ const GUI_LIST: GuiWorkspace[] = [
 interface Harness {
   ctx: CommandContext;
   sendMarkdown: ReturnType<typeof vi.fn>;
-  adopt: ReturnType<typeof vi.fn>;
   workspaces: WorkspaceStore;
   sessions: SessionStore;
 }
@@ -49,7 +40,6 @@ async function makeHarness(): Promise<Harness> {
   flushes.push(async () => Promise.all([workspaces.flush(), sessions.flush()]).then(() => undefined));
   workspaces.setCwd('chat-a', '/data/projects/dsh');
   const sendMarkdown = vi.fn().mockResolvedValue(undefined);
-  const adopt = vi.fn().mockResolvedValue({ ok: true });
   const ctx = {
     scope: 'chat-a',
     chatId: 'chat-a',
@@ -62,9 +52,8 @@ async function makeHarness(): Promise<Harness> {
     defaultWorkspace: '/data/projects/dsh',
     channel: { sendMarkdown } as unknown as CommandContext['channel'],
     guiWorkspaces: { list: async () => GUI_LIST },
-    guiAdopter: { adopt },
   } as unknown as CommandContext;
-  return { ctx, sendMarkdown, adopt, workspaces, sessions };
+  return { ctx, sendMarkdown, workspaces, sessions };
 }
 
 describe('/ws with the host GUI registry', () => {
@@ -78,34 +67,14 @@ describe('/ws with the host GUI registry', () => {
     expect(text).toContain('命名工作空间');
   });
 
-  it('switches by index and binds the GUI workspace without adopting when no session exists yet', async () => {
-    const { ctx, adopt, workspaces } = await makeHarness();
+  it('switches by index and binds the GUI workspace', async () => {
+    const { ctx, workspaces } = await makeHarness();
     await tryHandleCommand('/ws 2', ctx);
     expect(workspaces.cwdFor('chat-a')).toBe('/data/projects/Jack');
     expect(workspaces.getGuiBinding('chat-a')).toEqual({
       workspaceId: 'ws-jack',
       workspacePath: '/data/projects/Jack',
-      adoptedSessionId: undefined,
     });
-    expect(adopt).not.toHaveBeenCalled();
-  });
-
-  it('adopts an existing session for that workspace when switching', async () => {
-    const { ctx, adopt, workspaces, sessions } = await makeHarness();
-    sessions.set('chat-a', 'session-existing', '/data/projects/Jack');
-    await tryHandleCommand('/ws Jack', ctx);
-    expect(adopt).toHaveBeenCalledWith('session-existing', 'ws-jack');
-    expect(workspaces.getGuiBinding('chat-a')?.adoptedSessionId).toBe('session-existing');
-  });
-
-  it('keeps the adopted marker when adoption fails so the next turn retries', async () => {
-    const { ctx, adopt, workspaces, sessions, sendMarkdown } = await makeHarness();
-    adopt.mockResolvedValueOnce({ ok: false, error: 'its cwd resolves to something else' });
-    sessions.set('chat-a', 'session-existing', '/data/projects/Jack');
-    await tryHandleCommand('/ws use Jack', ctx);
-    expect(workspaces.getGuiBinding('chat-a')?.adoptedSessionId).toBeUndefined();
-    const text = sendMarkdown.mock.calls[0]?.[1] as string;
-    expect(text).toContain('its cwd resolves to something else');
   });
 
   it('resolves named aliases when the GUI registry has no match', async () => {
@@ -132,15 +101,3 @@ describe('/ws with the host GUI registry', () => {
   });
 });
 
-describe('/ws with GUI adoption disabled (default)', () => {
-  it('still switches, records the binding, and says grouping is off', async () => {
-    delete process.env.DSH_LARK_GUI_ADOPT;
-    const { ctx, adopt, workspaces, sessions, sendMarkdown } = await makeHarness();
-    sessions.set('chat-a', 'session-existing', '/data/projects/Jack');
-    await tryHandleCommand('/ws 2', ctx);
-    expect(workspaces.cwdFor('chat-a')).toBe('/data/projects/Jack');
-    expect(workspaces.getGuiBinding('chat-a')?.workspaceId).toBe('ws-jack');
-    expect(adopt).not.toHaveBeenCalled();
-    expect(sendMarkdown.mock.calls[0]?.[1] as string).toContain('未分组');
-  });
-});

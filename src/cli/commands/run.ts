@@ -58,7 +58,6 @@ import { archiveScopeSlug, SessionArchive } from '../../session/archive.js';
 import { GitWorktreeManager } from '../../workspace/git-worktree.js';
 import { WorkspaceStore } from '../../workspace/store.js';
 import { GuiWorkspaceRegistry } from '../../workspace/gui-registry.js';
-import { GuiWorkspaceAdopter } from '../../workspace/adopt.js';
 import { startHeartbeat } from '../../guardian/heartbeat.js';
 import { currentVersion } from '../../upgrade/update-check.js';
 import { bilingualMarkdown } from '../../card/i18n.js';
@@ -238,7 +237,6 @@ export async function startBridgeEngine(
   const archiver = new SessionArchive(paths.archivesDir(profileName));
   const workspaces = new WorkspaceStore(paths.workspacesFile(profileName));
   const guiWorkspaces = new GuiWorkspaceRegistry(dshHome);
-  const guiAdopter = new GuiWorkspaceAdopter({ baseUrl: env.webBaseUrl, dshHome });
   const roleStore = new RoleStore(paths.profilePath(profileName, 'roles.json'));
   const scopeDirectory = new ScopeDirectory(paths.profilePath(profileName, 'scopes.json'));
   const isolationStore = new IsolationStore(paths.profilePath(profileName, 'isolation.json'));
@@ -566,8 +564,7 @@ export async function startBridgeEngine(
           sessions,
           workspaces,
           workspaceCwd: first.workspaceCwd,
-          guiAdopter,
-          workspaceManager: worktreeManager,
+                workspaceManager: worktreeManager,
           activeRuns,
           runPolicies,
           archiver,
@@ -658,7 +655,6 @@ export async function startBridgeEngine(
     sessions,
     workspaces,
     guiWorkspaces,
-    guiAdopter,
     activeRuns,
     runPolicies,
     concurrencyStore,

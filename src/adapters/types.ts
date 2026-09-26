@@ -46,6 +46,12 @@ export interface AgentRunOptions {
   prompt: string;
   cwd: string | undefined;
   sessionId: string | undefined;
+  /**
+   * Host GUI workspace that should own a freshly created session (the `web`
+   * adapter's `session/create` attaches it to that workspace's roster). Absent
+   * for directory-only `/cd` switches, which stay unattached.
+   */
+  workspaceId?: string | undefined;
   /** Provider route for this run; adapters that bind a runtime route at
    *  construction time (SDK/ACP) rebind when it differs from the default. */
   provider?: string;

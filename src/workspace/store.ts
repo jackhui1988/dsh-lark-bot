@@ -12,8 +12,6 @@ interface ChatWorkspace {
   guiWorkspaceId?: string;
   /** Registry path behind `guiWorkspaceId`, validated against the run cwd. */
   guiWorkspacePath?: string;
-  /** Session already adopted into that workspace; re-adoption is skipped. */
-  guiAdoptedSessionId?: string;
 }
 
 interface WorkspaceData {
@@ -74,23 +72,11 @@ export class WorkspaceStore {
     this.schedulePersist();
   }
 
-  getGuiBinding(scopeId: string):
-    | { workspaceId: string; workspacePath: string; adoptedSessionId: string | undefined }
-    | undefined {
+  /** The GUI workspace this chat's current cwd was selected from, if any. */
+  getGuiBinding(scopeId: string): { workspaceId: string; workspacePath: string } | undefined {
     const entry = this.data.chats[scopeId];
     if (entry?.guiWorkspaceId === undefined || entry.guiWorkspacePath === undefined) return undefined;
-    return {
-      workspaceId: entry.guiWorkspaceId,
-      workspacePath: entry.guiWorkspacePath,
-      adoptedSessionId: entry.guiAdoptedSessionId,
-    };
-  }
-
-  markGuiAdopted(scopeId: string, sessionId: string): void {
-    const entry = this.data.chats[scopeId];
-    if (entry?.guiWorkspaceId === undefined) return;
-    this.data.chats[scopeId] = { ...entry, guiAdoptedSessionId: sessionId };
-    this.schedulePersist();
+    return { workspaceId: entry.guiWorkspaceId, workspacePath: entry.guiWorkspacePath };
   }
 
   listNamed(): Record<string, string> {

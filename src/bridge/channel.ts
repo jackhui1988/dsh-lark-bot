@@ -36,7 +36,6 @@ import type { SessionStore } from '../session/store.js';
 import type { SessionArchive } from '../session/archive.js';
 import type { WorkspaceStore } from '../workspace/store.js';
 import type { GuiWorkspaceRegistry } from '../workspace/gui-registry.js';
-import type { GuiWorkspaceAdopter } from '../workspace/adopt.js';
 import { adaptLarkChannel } from './lark-channel.js';
 import {
   GroupMessagePoller,
@@ -81,8 +80,6 @@ export interface StartChannelDeps {
   workspaces: WorkspaceStore;
   /** Host GUI workspace registry used by `/ws`; absent without a DSH home. */
   guiWorkspaces?: GuiWorkspaceRegistry;
-  /** Adopts `/ws`-selected sessions into GUI workspace rosters. */
-  guiAdopter?: GuiWorkspaceAdopter;
   activeRuns: ActiveRuns;
   runPolicies: RunPolicyStore;
   concurrencyStore: ConcurrencyStore;
@@ -406,7 +403,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       sessions: deps.sessions,
       workspaces: deps.workspaces,
       ...(deps.guiWorkspaces === undefined ? {} : { guiWorkspaces: deps.guiWorkspaces }),
-      ...(deps.guiAdopter === undefined ? {} : { guiAdopter: deps.guiAdopter }),
       activeRuns: deps.activeRuns,
       runPolicies: deps.runPolicies,
       concurrencyStore: deps.concurrencyStore,

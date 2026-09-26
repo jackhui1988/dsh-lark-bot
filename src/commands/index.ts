@@ -25,7 +25,6 @@ import type { SendOptions } from '../bridge/send-options.js';
 import type { WorkspaceStore } from '../workspace/store.js';
 import { renderWorkspaceCard } from '../card/workspace-card.js';
 import { resolveGuiWorkspace, type GuiWorkspace, type GuiWorkspaceRegistry } from '../workspace/gui-registry.js';
-import { guiAdoptionEnabled, type GuiWorkspaceAdopter } from '../workspace/adopt.js';
 import {
   renderStatusCard,
   statusCardMarkdown,
@@ -164,8 +163,6 @@ export interface CommandContext {
   channelUpdates?: Pick<ChannelUpdateController, 'check'>;
   /** Host GUI workspace registry (`$DSH_HOME/storages/workspace.json`). */
   guiWorkspaces?: GuiWorkspaceRegistry;
-  /** Adopts bridge sessions into GUI workspace rosters through the local gateway. */
-  guiAdopter?: GuiWorkspaceAdopter;
 }
 
 type Handler = (args: string, ctx: CommandContext) => Promise<void>;
@@ -445,24 +442,8 @@ async function handleWs(args: string, ctx: CommandContext): Promise<void> {
     let noteEn = '';
     if (target.gui !== undefined) {
       ctx.workspaces.setGuiBinding(ctx.scope, target.gui.id, target.gui.path);
-      const existing = ctx.sessions.getRaw(ctx.scope, target.cwd)?.sessionId;
-      if (!guiAdoptionEnabled()) {
-        noteZh = '（本部署未开启 GUI 挂组：会话仍留在「未分组」，需要 DSH_LARK_GUI_ADOPT=1 且由 web adapter 拥有会话）';
-        noteEn = ' (GUI grouping is off in this deployment: the session stays under "Ungrouped"; it needs DSH_LARK_GUI_ADOPT=1 with web-adapter-owned sessions)';
-      } else if (existing !== undefined && ctx.guiAdopter !== undefined) {
-        const adopted = await ctx.guiAdopter.adopt(existing, target.gui.id);
-        if (adopted.ok) {
-          ctx.workspaces.markGuiAdopted(ctx.scope, existing);
-          noteZh = '已有会话已挂到该 GUI 工作区分组。';
-          noteEn = ' The existing session was adopted into that GUI workspace group.';
-        } else {
-          noteZh = `已有会话暂未挂组（${adopted.error ?? 'unknown'}），下一条消息会自动重试。`;
-          noteEn = ` The existing session could not be grouped yet (${adopted.error ?? 'unknown'}); the next message retries automatically.`;
-        }
-      } else {
-        noteZh = '下一条消息创建的会话会自动挂到该 GUI 工作区分组。';
-        noteEn = ' The session created by your next message is adopted into that GUI workspace group automatically.';
-      }
+      noteZh = '下一条消息会以该工作区身份创建会话（`DSH_LARK_ADAPTER=web` 时它直接出现在该 GUI 工作区分组下）。';
+      noteEn = ' Your next message creates the session for that workspace (with `DSH_LARK_ADAPTER=web` it appears under that GUI workspace group right away).';
     }
     const interruptedZh = interrupted > 0 ? `已中断原工作区 ${String(interrupted)} 个运行中任务（会话数据保留）。` : '';
     const interruptedEn = interrupted > 0 ? ` Interrupted ${String(interrupted)} running task(s) in the previous workspace (session data was preserved).` : '';

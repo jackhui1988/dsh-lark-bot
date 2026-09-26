@@ -4,8 +4,9 @@ import { DshProviderManager, type DshModelSelection } from '../config/dsh-config
 import { DshAdapter } from './dsh/adapter.js';
 import { SdkDshAdapter } from './dsh/sdk-adapter.js';
 import { ensureSdkProfile, resolveSdkLaunch } from './dsh/sdk-runtime.js';
-import { WebDshAdapter } from './dsh/web-adapter.js';
+import { WebRpcDshAdapter } from './dsh/web-rpc-adapter.js';
 import { resolveModelChoice } from './model-choice.js';
+import { resolveDshHome } from '../config/dsh-runtime.js';
 import type { AgentAdapter } from './types.js';
 
 export interface AdapterPreferences {
@@ -88,8 +89,9 @@ export async function buildAgentAdapter(
       );
     }
     case 'web': {
-      return new WebDshAdapter({
+      return new WebRpcDshAdapter({
         baseUrl: env.webBaseUrl,
+        dshHome: resolveDshHome(homedir(), process.env),
         provider: env.provider,
         model: resolveModelChoice(preferences.model, env.model),
       });
